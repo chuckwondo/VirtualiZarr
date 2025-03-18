@@ -2,9 +2,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, List, Optional, Union, cast
 
 import numpy as np
-from xarray import Dataset
+import xarray as xr
 from xarray.backends.zarr import encode_zarr_attr_value
-from xarray.core.variable import Variable
 
 from virtualizarr.codecs import get_codecs
 from virtualizarr.manifests import ChunkManifest, ManifestArray
@@ -23,7 +22,7 @@ if TYPE_CHECKING:
 
 
 def dataset_to_icechunk(
-    ds: Dataset,
+    ds: xr.Dataset,
     store: "IcechunkStore",
     *,
     group: Optional[str] = None,
@@ -118,6 +117,72 @@ def dataset_to_icechunk(
     )
 
 
+def datatree_to_icechunk(
+    dt: xr.DataTree,
+    store: "IcechunkStore",
+    *,
+    last_updated_at: Optional[datetime] = None,
+) -> None:
+    """
+    Write an xarray dataset to an Icechunk store.
+
+    Both `icechunk` and `zarr` (v3) must be installed.
+
+    Parameters
+    ----------
+    dt: xr.DataTree
+        DataTree to write to an Icechunk store. All variables must be backed by
+        ManifestArray objects.
+    store: IcechunkStore
+        Store to write the dataset to, which must not be read-only.
+    last_updated_at: Optional[datetime]
+        The time at which the virtual dataset was last updated. When specified, if any
+        of the virtual chunks written in this session are modified in storage after this
+        time, icechunk will raise an error at runtime when trying to read the virtual
+        chunk. When not specified, icechunk will not check for modifications to the
+        virtual chunks at runtime.
+
+    Raises
+    ------
+    ValueError
+        If the store is read-only.
+    """
+    try:
+        from icechunk import IcechunkStore  # type: ignore[import-not-found]
+        # from zarr import Group  # type: ignore[import-untyped]
+        # from zarr.storage import StorePath  # type: ignore[import-untyped]
+    except ImportError:
+        raise ImportError(
+            "The 'icechunk' and 'zarr' version 3 libraries are required to use this function"
+        ) from None
+
+    if not isinstance(store, IcechunkStore):
+        raise TypeError(
+            f"store: expected type IcechunkStore, but got type {type(store)}"
+        )
+
+    if not isinstance(last_updated_at, (type(None), datetime)):
+        raise TypeError(
+            "last_updated_at: expected type Optional[datetime],"
+            f" but got type {type(last_updated_at)}"
+        )
+
+    if store.read_only:
+        raise ValueError("supplied store is read-only")
+
+    # for store_path, subtree in dt.subtree_with_keys:
+    #     ds = cast(xr.DataTree, subtree).dataset
+
+    #     write_variables_to_icechunk_group(
+    #         ds.variables,
+    #         ds.attrs,
+    #         store=store,
+    #         group=group_object,
+    #         append_dim=append_dim,
+    #         last_updated_at=last_updated_at,
+    #     )
+
+
 def write_variables_to_icechunk_group(
     variables,
     attrs,
@@ -140,7 +205,7 @@ def write_variables_to_icechunk_group(
     # NOTE: We set the attributes of the group before writing the dataset because the dataset
     # will overwrite the root group's attributes with the dataset's attributes. We take advantage
     # of xarrays zarr integration to ignore having to format the attributes ourselves.
-    ds = Dataset(loadable_variables, attrs=attrs)
+    ds = xr.Dataset(loadable_variables, attrs=attrs)
     ds.to_zarr(
         store,
         group=group.name,
@@ -204,7 +269,7 @@ def write_virtual_variable_to_icechunk(
     store: "IcechunkStore",
     group: "Group",
     name: str,
-    var: Variable,
+    var: xr.Variable,
     append_dim: Optional[str] = None,
     last_updated_at: Optional[datetime] = None,
 ) -> None:
